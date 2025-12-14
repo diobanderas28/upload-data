@@ -69,7 +69,7 @@
   <script>
     // ================== KONFIGURASI YANG ANDA UBAH DI SINI ==================
     const SUPABASE_URL = 'https://jyxbmligiunpchkfykjj.supabase.co';      // <-- GANTI
-    const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5eGJtbGlnaXVucGNoa2Z5a2pqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTQ4NTgxOSwiZXhwIjoyMDgxMDYxODE5fQ.EP57dstNoqnsuTYJRFRwDb10TjAij-AIrtwqJ_07qEo';         // <-- GANTI
+    const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5eGJtbGlnaXVucGNoa2Z5a2pqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0ODU4MTksImV4cCI6MjA4MTA2MTgxOX0.82bKqOXPya8jqnp9grZcD9FJJ9kdRqWHXTfn39rryFs';         // <-- GANTI
     // =======================================================================
 
     let supabaseClient = null;
@@ -134,7 +134,7 @@
     }
 
     window.addEventListener('DOMContentLoaded', () => {
-      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
       const tableSelect = document.getElementById('tableSelect');
       loadTables().then(() => {
@@ -321,7 +321,7 @@
       progressSection.style.display = 'block';
       setStatus(`Mulai upload ke tabel "${tableName}"...`, 'info');
 
-      const BATCH_SIZE = 5000;
+      const BATCH_SIZE = 1000;
       let processed = 0;
       const total = excelRows.length;
 
@@ -365,4 +365,3 @@
   </script>
 </body>
 </html>
-
