@@ -321,7 +321,7 @@
       progressSection.style.display = 'block';
       setStatus(`Mulai upload ke tabel "${tableName}"...`, 'info');
 
-      const BATCH_SIZE = 1000;
+      const BATCH_SIZE = 500;
       let processed = 0;
       const total = excelRows.length;
 
@@ -365,5 +365,6 @@
   </script>
 </body>
 </html>
+
 
 
