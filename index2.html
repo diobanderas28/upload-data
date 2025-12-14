@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Upload Excel ke Supabase (Auto Tables & Dates)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
+    h1 { margin-bottom: 10px; }
+    .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
+    label { font-weight: bold; display: block; margin-top: 10px; }
+    select, input[type="text"] { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
+    .upload-area { border: 2px dashed #007bff; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; margin-top: 15px; }
+    .upload-area.dragover { border-color: #0056b3; background-color: #f0f7ff; }
+    button { padding: 8px 16px; margin-top: 10px; border: none; border-radius: 4px; cursor: pointer; }
+    button.primary { background-color: #007bff; color: #fff; }
+    button.secondary { background-color: #6c757d; color: #fff; }
+    button:disabled { background-color: #ccc; cursor: not-allowed; }
+    #progressBarContainer { width: 100%; height: 16px; background: #eee; border-radius: 8px; margin-top: 10px; }
+    #progressBar { height: 100%; width: 0%; background: linear-gradient(90deg,#007bff,#28a745); border-radius: 8px; transition: width 0.3s; }
+    table { border-collapse: collapse; margin-top: 15px; white-space: nowrap; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 13px; }
+    th { background: #f8f9fa; }
+    .preview-wrapper { width: 100%; overflow-x: auto; }
+    #status { margin-top: 10px; padding: 10px; border-radius: 4px; font-size: 14px; }
+    .status-info { background: #e2f0ff; color: #084298; border: 1px solid #b6d4fe; }
+    .status-success { background: #d1e7dd; color: #0f5132; border: 1px solid #badbcc; }
+    .status-error { background: #f8d7da; color: #842029; border: 1px solid #f5c2c7; }
+    #metaInfo { margin-top: 8px; font-size: 13px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>Upload File Excel</h1>
+
+  <div class="card">
+    <h3>Konfigurasi</h3>
+    <label>Pilih Tabel (schema public):</label>
+    <select id="tableSelect"></select>
+    <div id="metaInfo"></div>
+  </div>
+
+  <div class="card">
+    <h3>Upload File Excel</h3>
+    <div class="upload-area" id="uploadArea">
+      <p><strong>Klik di sini</strong> atau drag file .xlsx/.xls/.csv ke area ini</p>
+      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+    </div>
+
+    <div id="fileInfo"></div>
+
+    <div id="progressSection" style="display:none;">
+      <div>Progress: <span id="progressText">0 / 0</span> baris</div>
+      <div id="progressBarContainer">
+        <div id="progressBar"></div>
+      </div>
+    </div>
+
+    <div id="previewSection" style="display:none;">
+      <h4>Preview (10 baris pertama)</h4>
+      <div id="previewTable"></div>
+      <button class="primary" id="btnUpload">Upload ke Supabase</button>
+      <button class="secondary" id="btnReset">Reset</button>
+    </div>
+
+    <div id="status"></div>
+  </div>
+
+  <script>
+    // ================== KONFIGURASI YANG ANDA UBAH DI SINI ==================
+    const SUPABASE_URL = 'https://jyxbmligiunpchkfykjj.supabase.co';      // <-- GANTI
+    const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5eGJtbGlnaXVucGNoa2Z5a2pqIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTQ4NTgxOSwiZXhwIjoyMDgxMDYxODE5fQ.EP57dstNoqnsuTYJRFRwDb10TjAij-AIrtwqJ_07qEo';         // <-- GANTI
+    // =======================================================================
+
+    let supabaseClient = null;
+    let excelRows = [];
+    let excelHeaders = [];
+    const autoDateColumns = {};   // { tableName: ['subscription_date', ...] }
+
+    function setStatus(msg, type) {
+      const statusDiv = document.getElementById('status');
+      statusDiv.className = '';
+      if (!msg) {
+        statusDiv.textContent = '';
+        return;
+      }
+      if (type === 'success') statusDiv.classList.add('status-success');
+      else if (type === 'error') statusDiv.classList.add('status-error');
+      else statusDiv.classList.add('status-info');
+      statusDiv.textContent = msg;
+    }
+
+    function normalizeHeader(header, idx) {
+      return (header || `col_${idx}`)
+        .toString()
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_]/g, '_');
+    }
+
+    function toPgDate(value) {
+      if (value == null || value === '') return null;
+
+      if (value instanceof Date) {
+        const y = value.getFullYear();
+        const m = String(value.getMonth() + 1).padStart(2, '0');
+        const d = String(value.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+
+      if (typeof value === 'number') {
+        const epoch = new Date(Date.UTC(1899, 11, 30));
+        const date = new Date(epoch.getTime() + value * 86400000);
+        const y = date.getUTCFullYear();
+        const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(date.getUTCDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+
+      const s = String(value).trim();
+      if (!s) return null;
+
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+
+      const dObj = new Date(s);
+      if (!isNaN(dObj.getTime())) {
+        const y = dObj.getFullYear();
+        const m = String(dObj.getMonth() + 1).padStart(2, '0');
+        const d = String(dObj.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+      }
+
+      return null;
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
+
+      const tableSelect = document.getElementById('tableSelect');
+      loadTables().then(() => {
+        if (tableSelect.value) loadDateColumns(tableSelect.value);
+      });
+
+      tableSelect.addEventListener('change', () => loadDateColumns(tableSelect.value));
+
+      const uploadArea = document.getElementById('uploadArea');
+      const fileInput = document.getElementById('fileInput');
+
+      uploadArea.addEventListener('click', () => fileInput.click());
+      fileInput.addEventListener('change', handleFile);
+
+      ['dragover','dragenter'].forEach(evt => {
+        uploadArea.addEventListener(evt, e => {
+          e.preventDefault();
+          uploadArea.classList.add('dragover');
+        });
+      });
+      ['dragleave','drop'].forEach(evt => {
+        uploadArea.addEventListener(evt, e => {
+          e.preventDefault();
+          uploadArea.classList.remove('dragover');
+        });
+      });
+      uploadArea.addEventListener('drop', e => {
+        handleFile({ target: { files: e.dataTransfer.files } });
+      });
+
+      document.getElementById('btnUpload').addEventListener('click', uploadToSupabase);
+      document.getElementById('btnReset').addEventListener('click', () => location.reload());
+    });
+
+    async function loadTables() {
+      const tableSelect = document.getElementById('tableSelect');
+      const metaInfo = document.getElementById('metaInfo');
+      tableSelect.innerHTML = '';
+      metaInfo.textContent = 'Mengambil daftar tabel public...';
+
+      try {
+        // v_table_list harus ada di schema public
+        const { data, error } = await supabaseClient
+          .from('v_table_list')
+          .select('table_name')
+          .order('table_name');
+
+        if (error) throw error;
+
+        if (!data || data.length === 0) {
+          metaInfo.textContent = 'Tidak ada tabel di schema public.';
+          return;
+        }
+
+        data.forEach(row => {
+          const opt = document.createElement('option');
+          opt.value = row.table_name;
+          opt.textContent = row.table_name;
+          tableSelect.appendChild(opt);
+        });
+
+        metaInfo.textContent =
+          'Tabel public terdeteksi: ' + data.map(r => r.table_name).join(', ');
+      } catch (e) {
+        setStatus('Gagal membaca daftar tabel: ' + e.message, 'error');
+        metaInfo.textContent = '';
+      }
+    }
+
+    async function loadDateColumns(tableName) {
+      const metaInfo = document.getElementById('metaInfo');
+      if (!tableName || !supabaseClient) return;
+
+      setStatus(`Mengambil metadata kolom untuk ${tableName}...`, 'info');
+
+      try {
+        // v_date_columns harus ada di schema public
+        const { data, error } = await supabaseClient
+          .from('v_date_columns')
+          .select('column_name')
+          .eq('table_name', tableName);
+
+        if (error) throw error;
+
+        const dateCols = (data || []).map(c => c.column_name.toLowerCase());
+        autoDateColumns[tableName] = dateCols;
+
+        setStatus(`Metadata ${tableName} OK.`, 'success');
+        metaInfo.textContent =
+          `Tabel: ${tableName} | Kolom tanggal: ${dateCols.length ? dateCols.join(', ') : '(tidak ada)'}`;
+      } catch (e) {
+        autoDateColumns[tableName] = [];
+        setStatus('Gagal membaca metadata kolom: ' + e.message, 'error');
+      }
+    }
+
+    async function handleFile(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (!supabaseClient) {
+        setStatus('Client Supabase belum terinisialisasi.', 'error');
+        return;
+      }
+
+      document.getElementById('fileInfo').textContent =
+        `File: ${file.name} (${Math.round(file.size/1024)} KB)`;
+      setStatus('Membaca file Excel...', 'info');
+
+      const reader = new FileReader();
+      reader.onload = evt => {
+        try {
+          const data = new Uint8Array(evt.target.result);
+          const wb = XLSX.read(data, { type: 'array' });
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, blankrows: false });
+
+          if (!rows || rows.length === 0) {
+            setStatus('Sheet kosong.', 'error');
+            return;
+          }
+
+          excelHeaders = rows[0];
+          excelRows = rows.slice(1);
+
+          renderPreview();
+          setStatus(`File terbaca. ${excelRows.length} baris data.`, 'success');
+        } catch (err) {
+          setStatus('Error membaca file: ' + err.message, 'error');
+        }
+      };
+      reader.readAsArrayBuffer(file);
+    }
+
+    function renderPreview() {
+      const previewSection = document.getElementById('previewSection');
+      const previewTableDiv = document.getElementById('previewTable');
+      previewSection.style.display = 'block';
+
+      const tableName = document.getElementById('tableSelect').value || '';
+      const dateCols = (autoDateColumns[tableName] || []);
+
+      let html = '<div class="preview-wrapper"><table><thead><tr>';
+      excelHeaders.forEach((h, i) => {
+        html += `<th>${h || 'Col' + i}</th>`;
+      });
+      html += '</tr></thead><tbody>';
+
+      excelRows.slice(0, 10).forEach(row => {
+        html += '<tr>';
+        excelHeaders.forEach((header, idx) => {
+          const colName = normalizeHeader(header, idx);
+          let val = row[idx];
+
+          if (dateCols.includes(colName)) {
+            const converted = toPgDate(val);
+            val = converted || val;
+          }
+
+          if (val == null) val = '';
+          html += `<td>${val}</td>`;
+        });
+        html += '</tr>';
+      });
+      html += '</tbody></table></div>';
+
+      previewTableDiv.innerHTML = html;
+    }
+
+    async function uploadToSupabase() {
+      const tableName = document.getElementById('tableSelect').value;
+      if (!tableName) {
+        setStatus('Pilih tabel tujuan terlebih dahulu.', 'error');
+        return;
+      }
+      if (!excelRows.length) {
+        setStatus('Tidak ada data untuk diupload.', 'error');
+        return;
+      }
+
+      const progressSection = document.getElementById('progressSection');
+      const progressText = document.getElementById('progressText');
+      const progressBar = document.getElementById('progressBar');
+
+      progressSection.style.display = 'block';
+      setStatus(`Mulai upload ke tabel "${tableName}"...`, 'info');
+
+      const BATCH_SIZE = 5000;
+      let processed = 0;
+      const total = excelRows.length;
+
+      const dateCols = (autoDateColumns[tableName] || []);
+
+      try {
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+          const batchRows = excelRows.slice(i, i + BATCH_SIZE);
+
+          const payload = batchRows.map(row => {
+            const obj = {};
+            excelHeaders.forEach((header, idx) => {
+              const colName = normalizeHeader(header, idx);
+              let value = (row[idx] === undefined ? null : row[idx]);
+
+              if (dateCols.includes(colName)) {
+                value = toPgDate(value);
+              }
+
+              obj[colName] = value;
+            });
+            return obj;
+          });
+
+          const { error } = await supabaseClient
+            .from(tableName)
+            .insert(payload);
+
+          if (error) throw error;
+
+          processed += batchRows.length;
+          progressText.textContent = `${processed} / ${total}`;
+          progressBar.style.width = `${(processed / total) * 100}%`;
+        }
+
+        setStatus(`Upload selesai. ${processed} baris berhasil diinsert ke tabel "${tableName}".`, 'success');
+      } catch (err) {
+        setStatus('Error saat upload: ' + err.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>
