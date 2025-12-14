@@ -2,20 +2,24 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Upload Excel ke Supabase (Auto Tables & Dates)</title>
+  <title>Upload Data Excel</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2" defer></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" defer></script>
   <style>
     body { font-family: Arial, sans-serif; max-width: 900px; margin: 40px auto; padding: 0 20px; }
-    h1 { margin-bottom: 10px; }
+    h1, h2 { margin-bottom: 10px; }
     .card { border: 1px solid #ddd; border-radius: 8px; padding: 20px; margin-bottom: 20px; }
     label { font-weight: bold; display: block; margin-top: 10px; }
-    select, input[type="text"] { width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box; }
-    .upload-area { border: 2px dashed #007bff; border-radius: 8px; padding: 40px; text-align: center; cursor: pointer; margin-top: 15px; }
+    input[type="email"], input[type="password"], select, input[type="text"] {
+      width: 100%; padding: 8px; margin-top: 4px; box-sizing: border-box;
+    }
+    .upload-area { border: 2px dashed #007bff; border-radius: 8px; padding: 40px;
+                   text-align: center; cursor: pointer; margin-top: 15px; }
     .upload-area.dragover { border-color: #0056b3; background-color: #f0f7ff; }
     button { padding: 8px 16px; margin-top: 10px; border: none; border-radius: 4px; cursor: pointer; }
     button.primary { background-color: #007bff; color: #fff; }
     button.secondary { background-color: #6c757d; color: #fff; }
+    button.danger { background-color: #dc3545; color: #fff; }
     button:disabled { background-color: #ccc; cursor: not-allowed; }
     #progressBarContainer { width: 100%; height: 16px; background: #eee; border-radius: 8px; margin-top: 10px; }
     #progressBar { height: 100%; width: 0%; background: linear-gradient(90deg,#007bff,#28a745); border-radius: 8px; transition: width 0.3s; }
@@ -31,46 +35,67 @@
   </style>
 </head>
 <body>
-  <h1>Upload File Excel</h1>
 
-  <div class="card">
-    <h3>Konfigurasi</h3>
-    <label>Pilih Tabel (schema public):</label>
-    <select id="tableSelect"></select>
-    <div id="metaInfo"></div>
+  <!-- Judul hanya muncul setelah login -->
+  <h1 id="pageTitle" style="display:none;">Upload Excel</h1>
+
+  <!-- LOGIN SECTION -->
+  <div id="loginSection" class="card" style="max-width:400px;margin:40px auto;">
+    <h2>Login</h2>
+    <label>Email</label>
+    <input type="email" id="loginEmail" placeholder="you@example.com">
+    <label>Password</label>
+    <input type="password" id="loginPassword" placeholder="Password">
+    <button id="btnLogin" class="primary">Login</button>
+    <div id="loginStatus" style="margin-top:8px;font-size:13px;color:#b00;"></div>
   </div>
 
-  <div class="card">
-    <h3>Upload File Excel</h3>
-    <div class="upload-area" id="uploadArea">
-      <p><strong>Klik di sini</strong> atau drag file .xlsx/.xls/.csv ke area ini</p>
-      <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none;">
+  <!-- APP SECTION (hidden until login) -->
+  <div id="appSection" style="display:none;">
+    <div style="text-align:right;margin-bottom:10px;">
+      <span id="userInfo" style="margin-right:10px;font-size:13px;color:#555;"></span>
+      <button id="btnLogout" class="danger">Logout</button>
     </div>
 
-    <div id="fileInfo"></div>
+    <div class="card">
+      <h3>Konfigurasi</h3>
+      <label>Pilih Tabel (schema public):</label>
+      <select id="tableSelect"></select>
+      <div id="metaInfo"></div>
+    </div>
 
-    <div id="progressSection" style="display:none;">
-      <div>Progress: <span id="progressText">0 / 0</span> baris</div>
-      <div id="progressBarContainer">
-        <div id="progressBar"></div>
+    <div class="card">
+      <h3>Upload File Excel</h3>
+      <div class="upload-area" id="uploadArea">
+        <p><strong>Klik di sini</strong> atau drag file .xlsx/.xls/.csv ke area ini</p>
+        <input type="file" id="fileInput" accept=".xlsx,.xls,.csv" style="display:none;">
       </div>
-    </div>
 
-    <div id="previewSection" style="display:none;">
-      <h4>Preview (10 baris pertama)</h4>
-      <div id="previewTable"></div>
-      <button class="primary" id="btnUpload">Upload ke Supabase</button>
-      <button class="secondary" id="btnReset">Reset</button>
-    </div>
+      <div id="fileInfo"></div>
 
-    <div id="status"></div>
+      <div id="progressSection" style="display:none;">
+        <div>Progress: <span id="progressText">0 / 0</span> baris</div>
+        <div id="progressBarContainer">
+          <div id="progressBar"></div>
+        </div>
+      </div>
+
+      <div id="previewSection" style="display:none;">
+        <h4>Preview (10 baris pertama)</h4>
+        <div id="previewTable"></div>
+        <button class="primary" id="btnUpload">Upload ke Supabase</button>
+        <button class="secondary" id="btnReset">Reset</button>
+      </div>
+
+      <div id="status"></div>
+    </div>
   </div>
 
   <script>
-    // ================== KONFIGURASI YANG ANDA UBAH DI SINI ==================
+    // ================== KONFIGURASI ==================
     const SUPABASE_URL = 'https://jyxbmligiunpchkfykjj.supabase.co';      // <-- GANTI
     const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imp5eGJtbGlnaXVucGNoa2Z5a2pqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NjU0ODU4MTksImV4cCI6MjA4MTA2MTgxOX0.82bKqOXPya8jqnp9grZcD9FJJ9kdRqWHXTfn39rryFs';         // <-- GANTI
-    // =======================================================================
+    // =================================================
 
     let supabaseClient = null;
     let excelRows = [];
@@ -80,10 +105,7 @@
     function setStatus(msg, type) {
       const statusDiv = document.getElementById('status');
       statusDiv.className = '';
-      if (!msg) {
-        statusDiv.textContent = '';
-        return;
-      }
+      if (!msg) { statusDiv.textContent = ''; return; }
       if (type === 'success') statusDiv.classList.add('status-success');
       else if (type === 'error') statusDiv.classList.add('status-error');
       else statusDiv.classList.add('status-info');
@@ -119,7 +141,6 @@
 
       const s = String(value).trim();
       if (!s) return null;
-
       if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
 
       const dObj = new Date(s);
@@ -129,17 +150,28 @@
         const d = String(dObj.getDate()).padStart(2, '0');
         return `${y}-${m}-${d}`;
       }
-
       return null;
     }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    function showLogin() {
+      document.getElementById('pageTitle').style.display = 'none';
+      document.getElementById('loginSection').style.display = 'block';
+      document.getElementById('appSection').style.display = 'none';
+    }
 
+    function showApp(user) {
+      document.getElementById('pageTitle').style.display = 'block';
+      document.getElementById('loginSection').style.display = 'none';
+      document.getElementById('appSection').style.display = 'block';
+      document.getElementById('userInfo').textContent =
+        user?.email ? `Login sebagai: ${user.email}` : '';
+      initUploadUI();
+    }
+
+    async function initUploadUI() {
+      await loadTables();
       const tableSelect = document.getElementById('tableSelect');
-      loadTables().then(() => {
-        if (tableSelect.value) loadDateColumns(tableSelect.value);
-      });
+      if (tableSelect.value) await loadDateColumns(tableSelect.value);
 
       tableSelect.addEventListener('change', () => loadDateColumns(tableSelect.value));
 
@@ -167,7 +199,42 @@
 
       document.getElementById('btnUpload').addEventListener('click', uploadToSupabase);
       document.getElementById('btnReset').addEventListener('click', () => location.reload());
+    }
+
+    window.addEventListener('DOMContentLoaded', async () => {
+      supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session?.user) {
+        showApp(session.user);
+      } else {
+        showLogin();
+      }
+
+      document.getElementById('btnLogin').addEventListener('click', doLogin);
+      document.getElementById('btnLogout').addEventListener('click', doLogout);
     });
+
+    async function doLogin() {
+      const email = document.getElementById('loginEmail').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      const status = document.getElementById('loginStatus');
+
+      status.textContent = 'Logging in...';
+
+      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+      if (error) {
+        status.textContent = 'Error: ' + error.message;
+        return;
+      }
+      status.textContent = '';
+      showApp(data.user);
+    }
+
+    async function doLogout() {
+      await supabaseClient.auth.signOut();
+      location.reload();
+    }
 
     async function loadTables() {
       const tableSelect = document.getElementById('tableSelect');
@@ -176,7 +243,6 @@
       metaInfo.textContent = 'Mengambil daftar tabel public...';
 
       try {
-        // v_table_list harus ada di schema public
         const { data, error } = await supabaseClient
           .from('v_table_list')
           .select('table_name')
@@ -211,7 +277,6 @@
       setStatus(`Mengambil metadata kolom untuk ${tableName}...`, 'info');
 
       try {
-        // v_date_columns harus ada di schema public
         const { data, error } = await supabaseClient
           .from('v_date_columns')
           .select('column_name')
@@ -234,10 +299,6 @@
     async function handleFile(e) {
       const file = e.target.files[0];
       if (!file) return;
-      if (!supabaseClient) {
-        setStatus('Client Supabase belum terinisialisasi.', 'error');
-        return;
-      }
 
       document.getElementById('fileInfo').textContent =
         `File: ${file.name} (${Math.round(file.size/1024)} KB)`;
@@ -365,7 +426,3 @@
   </script>
 </body>
 </html>
-
-
-
-
